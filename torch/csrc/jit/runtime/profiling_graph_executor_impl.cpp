@@ -352,12 +352,12 @@ void runNoGradOptimizations(std::shared_ptr<Graph>& graph) {
     for (const auto& passPair : getCustomPrePasses()) {
       passPair.first(graph);
     }
-    GRAPH_DEBUG("After customPrePasses, before LowerSimpleTuples\n", *graph);
+    GRAPH_DEBUG("After customPrePasses, before lowerSimpleTuples\n", *graph);
 
     // TupleConstruct / TupleUnpack pairs can still be present at this point
     // and must be removed for fusion.
-    LowerSimpleTuples(graph);
-    GRAPH_DEBUG("After LowerSimpleTuples\n", *graph);
+    lowerSimpleTuples(graph);
+    GRAPH_DEBUG("After lowerSimpleTuples\n", *graph);
 
     if (tensorExprFuserEnabled()) {
       // Remove prim::profile nodes and embed the profile info directly in the
@@ -514,9 +514,9 @@ void ProfilingGraphExecutorImpl::runProfilingInsensitiveOptimizations(
   PeepholeOptimize(graph);
   GRAPH_DEBUG("After PeepholeOptimize, before EliminateDeadCode\n", *graph);
   EliminateDeadCode(graph);
-  GRAPH_DEBUG("After EliminateDeadCode, before LowerSimpleTuples\n", *graph);
-  LowerSimpleTuples(graph);
-  GRAPH_DEBUG("After LowerSimpleTuples, before CheckInplace\n", *graph);
+  GRAPH_DEBUG("After EliminateDeadCode, before lowerSimpleTuples\n", *graph);
+  lowerSimpleTuples(graph);
+  GRAPH_DEBUG("After lowerSimpleTuples, before CheckInplace\n", *graph);
   CheckInplace(graph);
   GRAPH_DEBUG(
       "After CheckInplace (end of runProfilingInsensitiveOptimizations)\n",
