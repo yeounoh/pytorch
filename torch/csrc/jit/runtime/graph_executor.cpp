@@ -658,10 +658,10 @@ struct GraphExecutorImpl : public GraphExecutorImplBase {
         "After LowerGradOf, before specializeAutogradZero\n", *opt_graph);
     specializeAutogradZero(opt_graph);
     GRAPH_DEBUG(
-        "After specializeAutogradZero, before LowerSimpleTuples\n", *opt_graph);
-    LowerSimpleTuples(opt_graph);
+        "After specializeAutogradZero, before lowerSimpleTuples\n", *opt_graph);
+    lowerSimpleTuples(opt_graph);
     GRAPH_DEBUG(
-        "After LowerSimpleTuples, before ConstantPooling\n", *opt_graph);
+        "After lowerSimpleTuples, before ConstantPooling\n", *opt_graph);
     ConstantPooling(opt_graph);
     GRAPH_DEBUG(
         "After ConstantPooling, before runRequiredPasses\n", *opt_graph);
@@ -883,8 +883,8 @@ void runNondiffOptimization(
 
   // TupleConstruct / TupleUnpack pairs can still be present at this point
   // and must be removed for fusion.
-  LowerSimpleTuples(graph);
-  GRAPH_DEBUG("After LowerSimpleTuples, before BatchMM\n", *graph);
+  lowerSimpleTuples(graph);
+  GRAPH_DEBUG("After lowerSimpleTuples, before BatchMM\n", *graph);
 
   // Rewrite subgraphs with many MMs into expressions that batch them.
   BatchMM(graph);
