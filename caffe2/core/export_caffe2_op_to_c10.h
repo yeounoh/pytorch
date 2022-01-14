@@ -11,6 +11,7 @@
 #include <c10/core/CompileTimeFunctionPointer.h>
 #include <c10/util/irange.h>
 #include <torch/library.h>
+#include <caffe2/core/tensor.h>
 #include <vector>
 
 namespace caffe2 {
@@ -19,19 +20,19 @@ namespace detail {
 constexpr const char* PREALLOCATED_OUTPUT_ARGNAME =
     "_caffe2_preallocated_outputs";
 
-using _CallCaffe2OpFunc = c10::List<at::Tensor>(
+using _CallCaffe2OpFunc = std::vector<caffe2::Tensor>(
     const c10::FunctionSchema& schema,
-    std::vector<c10::IValue>&& inputs,
-    c10::List<at::Tensor>&& outputs);
+    std::vector<c10::IValue> &&inputs,
+    std::vector<caffe2::Tensor> &&outputs);
 
 template <class Caffe2Operator>
-inline c10::List<at::Tensor> _call_caffe2_op(
+inline std::vector<caffe2::Tensor> _call_caffe2_op(
     const c10::FunctionSchema& schema,
-    std::vector<c10::IValue>&& inputs,
-    c10::List<at::Tensor>&& outputs) {
+    std::vector<c10::IValue> &&inputs,
+    std::vector<caffe2::Tensor> &&outputs) {
   Caffe2Operator op(schema, std::move(inputs), std::move(outputs), -1);
   op.Run(-1);
-  return std::move(op).move_newstyle_outputs();
+  return std::move(op).move_output_tensors();
 }
 
 // This function is inline in the hope that compilers optimizing for speed will
@@ -74,13 +75,21 @@ inline void _call_caffe2_op_from_c10(
   } else {
     AT_ASSERT(preallocated_outputs.isTensorList());
     outputs = std::move(preallocated_outputs).toTensorList();
+    TORCH_INTERNAL_ASSERT(num_outputs == outputs.size());
   }
 
   // TODO Avoid vector allocation. One idea would be to keep the std::vector
   // instances in the cache.
   std::vector<IValue> inputs = torch::jit::pop(*stack, num_inputs);
 
-  outputs = (*call_op)(schema, std::move(inputs), std::move(outputs));
+  // Convert outputs to caffe2::Tensor
+  std::vector<caffe2::Tensor> outputs_c2(num_outputs);
+  for (auto i : c10::irange(num_outputs)) {
+    outputs_c2[i] = caffe2::Tensor(outputs.extract(i));
+  }
+
+  outputs_c2 = (*call_op)(schema, std::move(inputs), std::move(outputs_c2));
+  TORCH_INTERNAL_ASSERT(num_outputs == outputs_c2.size());
 
   bool return_tensor_list = false;
   if (schema.returns().size() == 1) {
@@ -92,11 +101,13 @@ inline void _call_caffe2_op_from_c10(
     }
   }
   if (return_tensor_list) {
-    // We should not unwrap the list if we expect tensor list in the schema.
+    for (const auto i : c10::irange(num_outputs)) {
+      outputs.set(i, at::Tensor(std::move(outputs_c2[i])));
+    }
     torch::jit::push(*stack, outputs);
   } else {
-    for (const auto i : c10::irange(outputs.size())) {
-      torch::jit::push(*stack, outputs.extract(i));
+    for (const auto i : c10::irange(num_outputs)) {
+      torch::jit::push(*stack, at::Tensor(std::move(outputs_c2[i])));
     }
   }
 
