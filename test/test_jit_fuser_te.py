@@ -21,13 +21,18 @@ torch._C._jit_set_profiling_executor(True)
 torch._C._jit_set_profiling_mode(True)
 
 from torch.testing._internal.common_utils import run_tests, ProfilingMode, GRAPH_EXECUTOR, \
-    enable_profiling_mode_for_profiling_tests, TestCase
+    enable_profiling_mode_for_profiling_tests
 from torch.testing._internal.jit_utils import JitTestCase, \
-    RUN_CUDA, RUN_CUDA_HALF, RUN_CUDA_MULTI_GPU, warmup_backward, set_fusion_group_inlining
+    RUN_CUDA, RUN_CUDA_HALF, RUN_CUDA_MULTI_GPU, warmup_backward, set_fusion_group_inlining, \
+    clone_inputs, get_traced_sample_variant_pairs, TensorExprTestOptions
 
 from torch.testing._internal.common_methods_invocations import op_db
-from torch.testing._internal.common_device_type import ops, onlyCPU, instantiate_device_type_tests
+from torch.testing._internal.common_device_type import ops, onlyCPU, instantiate_device_type_tests, \
+    OpDTypes
+from torch.testing._internal.common_jit import JitCommonTestCase
+from torch.testing._internal.jit_metaprogramming_utils import create_traced_fn
 
+from functools import partial
 from textwrap import dedent
 from itertools import product, permutations
 
@@ -75,28 +80,12 @@ def inline_fusion_groups():
     finally:
         torch._C._debug_set_fusion_group_inlining(old_inlining)
 
+_tracing_ops = partial(ops, dtypes=OpDTypes.supported,
+                       allowed_dtypes=(torch.float, torch.cfloat))
+
 class TestTEFuser(JitTestCase):
     def setUp(self):
-        self.old_cpu_fuser_state = torch._C._jit_can_fuse_on_cpu()
-        self.old_must_use_cpu_state = torch._C._jit_get_te_must_use_llvm_cpu()
-        self.old_gpu_fuser_state = torch._C._jit_can_fuse_on_gpu()
-
-        torch._C._jit_override_can_fuse_on_cpu(True)
-        # TODO: force LLVM. need to add it to asan, mac, windows builds + sandcastle
-        # torch._C._jit_set_te_must_use_llvm_cpu(True)
-        torch._C._jit_override_can_fuse_on_gpu(True)
-
-        self.old_profiling_executor = torch._C._jit_set_profiling_executor(True)
-        self.old_profiling_mode = torch._C._jit_set_profiling_mode(True)
-
-        self.old_fusion_inlining = torch._C._debug_get_fusion_group_inlining()
-        torch._C._debug_set_fusion_group_inlining(False)
-
-        self.texpr_fuser_state = torch._C._jit_texpr_fuser_enabled()
-        torch._C._jit_set_texpr_fuser_enabled(True)
-
-        self.old_te_must_use_llvm_cpu = torch._C._jit_get_te_must_use_llvm_cpu()
-        torch._C._jit_set_te_must_use_llvm_cpu(False)
+        self.tensorexpr_options = TensorExprTestOptions()
 
         self.devices = ['cpu'] if not torch.cuda.is_available() else ['cpu', 'cuda']
         self.int_dtypes = [
@@ -115,16 +104,7 @@ class TestTEFuser(JitTestCase):
         self.dtypes = self.int_dtypes + self.fp_dtypes
 
     def tearDown(self):
-        torch._C._jit_set_profiling_executor(self.old_profiling_executor)
-        torch._C._jit_set_profiling_mode(self.old_profiling_mode)
-
-        torch._C._jit_override_can_fuse_on_gpu(self.old_gpu_fuser_state)
-        torch._C._jit_override_can_fuse_on_cpu(self.old_cpu_fuser_state)
-        torch._C._jit_set_te_must_use_llvm_cpu(self.old_must_use_cpu_state)
-        torch._C._debug_set_fusion_group_inlining(self.old_fusion_inlining)
-
-        torch._C._jit_set_texpr_fuser_enabled(self.texpr_fuser_state)
-        torch._C._jit_set_te_must_use_llvm_cpu(self.old_te_must_use_llvm_cpu)
+        self.tensorexpr_options.restore()
 
     def assertLastGraphAllFused(self):
         self.assertAllFused(torch.jit.last_executed_optimized_graph())
@@ -2228,7 +2208,13 @@ def get_name(op):
         l.append(op.variant_test_name)
     return '.'.join(l)
 
-class TestNNCOpInfo(TestCase):
+class TestNNCOpInfo(JitCommonTestCase):
+    def setUp(self):
+        self.tensorexpr_options = TensorExprTestOptions()
+
+    def tearDown(self):
+        self.tensorexpr_options.restore()
+
     def te_compile(self, device, dtype, op):
         if op.name in skip_ops:
             return
@@ -2302,6 +2288,20 @@ def f({', '.join(param_names)}):
         else:
             raise RuntimeError("Expected test to fail. If it now works, move op into works_list")
 
+    @onlyCPU
+    @_tracing_ops(op_db)
+    def test_nnc_correctness(self, device, dtype, op):
+        variant_sample_pairs = get_traced_sample_variant_pairs(device, dtype, op)
+
+        for variant, sample in variant_sample_pairs:
+            trace = create_traced_fn(self, variant)
+            ref = variant(*clone_inputs((sample.input, *sample.args)), **sample.kwargs)
+
+            trace(*clone_inputs((sample.input, *sample.args)), **sample.kwargs)
+
+            val = trace(*clone_inputs((sample.input, *sample.args)), **sample.kwargs)
+
+            self.assertEqual(ref, val)
 
 only_for = ("cpu", "cuda")
 instantiate_device_type_tests(TestNNCOpInfo, globals(), only_for=only_for)
