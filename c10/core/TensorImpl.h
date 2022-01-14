@@ -837,10 +837,7 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
   bool is_sparse() const {
     // NB: This method is not virtual and avoid dispatches for performance
     // reasons.
-    return key_set_.has(DispatchKey::SparseCPU) ||
-        key_set_.has(DispatchKey::SparseCUDA) ||
-        key_set_.has(DispatchKey::SparseHIP) ||
-        key_set_.has(DispatchKey::SparseXPU);
+    return key_set_.has(DispatchKey::Sparse);
   }
 
   // Whether a tensor is sparse COO or not. Use is_sparse_csr for checking CSR
@@ -853,9 +850,7 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
   bool is_quantized() const {
     // NB: This method is not virtual and avoid dispatches for performance
     // reasons.
-    return key_set_.has(DispatchKey::QuantizedCPU) ||
-        key_set_.has(DispatchKey::QuantizedCUDA) ||
-        key_set_.has(DispatchKey::QuantizedXPU);
+    return key_set_.has(DispatchKey::Quantized);
   }
 
   bool is_meta() const {
@@ -867,53 +862,46 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
   bool is_cpu() const {
     // NB: This method is not virtual and avoid dispatches for performance
     // reasons.
-    return key_set_.has(DispatchKey::CPU) ||
-        key_set_.has(DispatchKey::SparseCPU) ||
+    return key_set_.has(BackendBit::CPUBit) ||
         key_set_.has(DispatchKey::SparseCsrCPU) ||
-        key_set_.has(DispatchKey::QuantizedCPU) ||
         key_set_.has(DispatchKey::MkldnnCPU);
   }
 
   bool is_cuda() const {
     // NB: This method is not virtual and avoid dispatches for performance
     // reasons.
-    return key_set_.has(DispatchKey::CUDA) ||
-        key_set_.has(DispatchKey::SparseCUDA) ||
-        key_set_.has(DispatchKey::SparseCsrCUDA) ||
-        key_set_.has(DispatchKey::QuantizedCUDA);
+    return key_set_.has(BackendBit::CUDABit) ||
+        key_set_.has(DispatchKey::SparseCsrCUDA);
   }
 
   bool is_xpu() const {
     // NB: This method is not virtual and avoid dispatches for performance
     // reasons.
-    return key_set_.has(DispatchKey::XPU) ||
-        key_set_.has(DispatchKey::SparseXPU) ||
-        key_set_.has(DispatchKey::QuantizedXPU);
+    return key_set_.has(BackendBit::XPUBit);
   }
 
   bool is_xla() const {
-    return key_set_.has(DispatchKey::XLA);
+    return key_set_.has(BackendBit::XLABit);
   }
 
   bool is_hpu() const {
-    return key_set_.has(DispatchKey::HPU);
+    return key_set_.has(BackendBit::HPUBit);
   }
 
   bool is_lazy() const {
-    return key_set_.has(DispatchKey::Lazy);
+    return key_set_.has(BackendBit::LazyBit);
   }
 
   bool is_hip() const {
     // NB: This method is not virtual and avoid dispatches for performance
     // reasons.
-    return key_set_.has(DispatchKey::HIP) ||
-        key_set_.has(DispatchKey::SparseHIP);
+    return key_set_.has(BackendBit::HIPBit);
   }
 
   bool is_ve() const {
     // NB: This method is not virtual and avoid dispatches for performance
     // reasons.
-    return key_set_.has(DispatchKey::VE) || key_set_.has(DispatchKey::SparseVE);
+    return key_set_.has(BackendBit::VEBit);
   }
 
   bool is_mkldnn() const {
@@ -942,15 +930,19 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
   // DON'T USE THIS API!! It's only created for testing purpose in
   // file aten/src/ATen/core/boxing/impl/test_helpers.h
   void remove_autograd_key() {
-    key_set_ = key_set_ - autograd_dispatch_keyset;
+    key_set_ = key_set_.removeFunctionalityKeys(autograd_dispatch_keyset);
   }
 
   // Inference tensor doesn't have autograd or ADInplaceOrView key.
   // Invariant:
   //   Inference tensor has version_counter_.enabled() == false
   bool is_inference() {
+
     bool no_ADInplaceOrView = !key_set_.has(c10::DispatchKey::ADInplaceOrView);
-    bool no_Autograd = (key_set_ & c10::autograd_dispatch_keyset).empty();
+    bool no_Autograd = (key_set_ & DispatchKeySet({
+      c10::DispatchKey::AutogradFunctionality,
+      c10::DispatchKey::AutogradOther
+    })).empty();
     TORCH_INTERNAL_ASSERT_DEBUG_ONLY(
         no_ADInplaceOrView == no_Autograd,
         "ADInplaceOrView and Autograd keys must be on/off at the same time.");
@@ -1076,7 +1068,7 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
       key_set_ = key_set_.add(DispatchKey::Conjugate);
       TORCH_INTERNAL_ASSERT(isComplexType(typeMetaToScalarType(dtype())));
     } else {
-      key_set_ = key_set_.remove(DispatchKey::Conjugate);
+      key_set_ = key_set_.removeFunctionalityKey(DispatchKey::Conjugate);
     }
   }
 
@@ -1096,7 +1088,7 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
           false,
           "Please call `torch._efficientzerotensor` if you want to create a tensor with no storage.");
     } else {
-      key_set_ = key_set_.remove(DispatchKey::ZeroTensor);
+      key_set_ = key_set_.removeFunctionalityKey(DispatchKey::ZeroTensor);
     }
   }
 
@@ -1115,7 +1107,7 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
     if (value) {
       key_set_ = key_set_.add(DispatchKey::Negative);
     } else {
-      key_set_ = key_set_.remove(DispatchKey::Negative);
+      key_set_ = key_set_.removeFunctionalityKey(DispatchKey::Negative);
     }
   }
 
@@ -1467,7 +1459,7 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
 #endif
     named_tensor_meta_ = std::move(named_tensor_meta);
     if (named_tensor_meta_ == nullptr) {
-      key_set_ = key_set_.remove(DispatchKey::Named);
+      key_set_ = key_set_.removeFunctionalityKey(DispatchKey::Named);
     } else {
       key_set_ = key_set_.add(DispatchKey::Named);
     }
@@ -1477,7 +1469,7 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
     if (k) {
       key_set_ = key_set_.add(DispatchKey::Python);
     } else {
-      key_set_ = key_set_.remove(DispatchKey::Python);
+      key_set_ = key_set_.removeFunctionalityKey(DispatchKey::Python);
     }
   }
 
@@ -1547,13 +1539,24 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
    */
   inline bool has_compatible_shallow_copy_type(DispatchKeySet from) {
     auto is_dense = [](DispatchKeySet ts) {
-      return ts.has(DispatchKey::CPU) || ts.has(DispatchKey::CUDA) ||
-          ts.has(DispatchKey::HIP) || ts.has(DispatchKey::XPU);
+      constexpr auto dense_backends = DispatchKeySet({
+        BackendBit::CPUBit,
+        BackendBit::CUDABit,
+        BackendBit::HIPBit,
+        BackendBit::XPUBit
+      });
+      constexpr auto dense_k = DispatchKeySet(DispatchKey::Dense);
+      return ts.has_any(dense_k) && ts.has_any(dense_backends);
     };
     auto is_sparse = [](DispatchKeySet ts) {
-      return ts.has(DispatchKey::SparseCPU) ||
-          ts.has(DispatchKey::SparseCUDA) || ts.has(DispatchKey::SparseHIP) ||
-          ts.has(DispatchKey::SparseXPU);
+      constexpr auto sparse_backends = DispatchKeySet({
+        BackendBit::CPUBit,
+        BackendBit::CUDABit,
+        BackendBit::HIPBit,
+        BackendBit::XPUBit
+      });
+      constexpr auto sparse_k = DispatchKeySet(DispatchKey::Sparse);
+      return ts.has_any(sparse_k) && ts.has_any(sparse_backends);
     };
     return (key_set_ == from) || (is_dense(key_set_) && is_dense(from)) ||
         (is_sparse(key_set_) && is_sparse(from));
