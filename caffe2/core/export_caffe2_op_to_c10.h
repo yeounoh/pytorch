@@ -8,6 +8,7 @@
 #include <ATen/core/grad_mode.h>
 #include <ATen/core/op_registration/op_registration.h>
 #include <torch/csrc/jit/frontend/function_schema_parser.h>
+#include <caffe2/core/tensor.h>
 #include <c10/core/CompileTimeFunctionPointer.h>
 #include <c10/util/irange.h>
 #include <torch/library.h>
@@ -22,15 +23,15 @@ constexpr const char* PREALLOCATED_OUTPUT_ARGNAME =
 
 using _CallCaffe2OpFunc = std::vector<caffe2::Tensor>(
     const c10::FunctionSchema& schema,
-    std::vector<c10::IValue> &&inputs,
+    c10::ArrayRef<c10::IValue> inputs,
     std::vector<caffe2::Tensor> &&outputs);
 
 template <class Caffe2Operator>
 inline std::vector<caffe2::Tensor> _call_caffe2_op(
     const c10::FunctionSchema& schema,
-    std::vector<c10::IValue> &&inputs,
+    c10::ArrayRef<c10::IValue> inputs,
     std::vector<caffe2::Tensor> &&outputs) {
-  Caffe2Operator op(schema, std::move(inputs), std::move(outputs), -1);
+  Caffe2Operator op(schema, inputs, std::move(outputs), -1);
   op.Run(-1);
   return std::move(op).move_output_tensors();
 }
