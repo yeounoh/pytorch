@@ -294,6 +294,13 @@ class TORCH_API CppFunction final {
     return CppFunction(f);
   }
 
+  static CppFunction makeFromBoxedKernel(c10::BoxedKernel kernel) {
+    return CppFunction(
+        c10::KernelFunction::makeFromBoxedKernel(std::move(kernel)),
+        /* cpp_signature */ c10::nullopt, // not known for boxed functions
+        /* schema */ nullptr);
+  }
+
   CppFunction&& debug(std::string d) && {
     debug_ = std::move(d);
     return std::move(*this);
